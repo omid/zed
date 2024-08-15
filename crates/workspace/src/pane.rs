@@ -4,6 +4,7 @@ use crate::{
         WeakItemHandle,
     },
     toolbar::Toolbar,
+    ui::TabBarPosition,
     workspace_settings::{AutosaveSetting, TabBarSettings, WorkspaceSettings},
     CloseWindow, CopyPath, CopyRelativePath, NewFile, NewTerminal, OpenInTerminal, OpenTerminal,
     OpenVisible, SplitDirection, ToggleFileFinder, ToggleProjectSymbols, ToggleZoom, Workspace,
@@ -254,6 +255,7 @@ pub struct Pane {
         Option<Arc<dyn Fn(&mut Pane, &dyn Any, &mut ViewContext<Pane>) -> ControlFlow<(), ()>>>,
     can_split: bool,
     should_display_tab_bar: Rc<dyn Fn(&ViewContext<Pane>) -> bool>,
+    tab_bar_position: Rc<dyn Fn(&ViewContext<Pane>) -> TabBarPosition>,
     render_tab_bar_buttons:
         Rc<dyn Fn(&mut Pane, &mut ViewContext<Pane>) -> (Option<AnyElement>, Option<AnyElement>)>,
     _subscriptions: Vec<Subscription>,
@@ -373,6 +375,7 @@ impl Pane {
             custom_drop_handle: None,
             can_split: true,
             should_display_tab_bar: Rc::new(|cx| TabBarSettings::get_global(cx).show),
+            tab_bar_position: Rc::new(|cx| TabBarSettings::get_global(cx).position),
             render_tab_bar_buttons: Rc::new(move |pane, cx| {
                 if !pane.has_focus(cx) {
                     return (None, None);
@@ -589,6 +592,13 @@ impl Pane {
         F: 'static + Fn(&ViewContext<Pane>) -> bool,
     {
         self.should_display_tab_bar = Rc::new(should_display_tab_bar);
+    }
+
+    pub fn set_tab_bar_position<F>(&mut self, tab_bar_position: F)
+    where
+        F: 'static + Fn(&ViewContext<Pane>) -> TabBarPosition,
+    {
+        self.tab_bar_position = Rc::new(tab_bar_position);
     }
 
     pub fn set_can_split(&mut self, can_split: bool, cx: &mut ViewContext<Self>) {
@@ -1891,7 +1901,11 @@ impl Pane {
         })
     }
 
-    fn render_tab_bar(&mut self, cx: &mut ViewContext<'_, Pane>) -> impl IntoElement {
+    fn render_tab_bar(
+        &mut self,
+        tab_bar_position: TabBarPosition,
+        cx: &mut ViewContext<'_, Pane>,
+    ) -> impl IntoElement {
         let navigate_backward = IconButton::new("navigate_backward", IconName::ArrowLeft)
             .shape(IconButtonShape::Square)
             .icon_size(IconSize::Small)
@@ -1912,7 +1926,45 @@ impl Pane {
             .disabled(!self.can_navigate_forward())
             .tooltip(|cx| Tooltip::for_action("Go Forward", &GoForward, cx));
 
+        let mut child = div()
+            .id("tab_bar_drop_target")
+            .min_w_6()
+            // HACK: This empty child is currently necessary to force the drop target to appear
+            // despite us setting a min width above.
+            .child("");
+        child = match tab_bar_position {
+            TabBarPosition::Top => child.h_full(),
+            TabBarPosition::Right => child.w_full(),
+        };
+
+        child = child
+            // .flex_grow()
+            .drag_over::<DraggedTab>(|bar, _, cx| {
+                bar.bg(cx.theme().colors().drop_target_background)
+            })
+            .drag_over::<DraggedSelection>(|bar, _, cx| {
+                bar.bg(cx.theme().colors().drop_target_background)
+            })
+            .on_drop(cx.listener(move |this, dragged_tab: &DraggedTab, cx| {
+                this.drag_split_direction = None;
+                this.handle_tab_drop(dragged_tab, this.items.len(), cx)
+            }))
+            .on_drop(cx.listener(move |this, selection: &DraggedSelection, cx| {
+                this.drag_split_direction = None;
+                this.handle_project_entry_drop(&selection.active_selection.entry_id, cx)
+            }))
+            .on_drop(cx.listener(move |this, paths, cx| {
+                this.drag_split_direction = None;
+                this.handle_external_paths_drop(paths, cx)
+            }))
+            .on_click(cx.listener(move |this, event: &ClickEvent, cx| {
+                if event.up.click_count == 2 {
+                    cx.dispatch_action(this.double_click_dispatch_action.boxed_clone())
+                }
+            }));
+
         TabBar::new("tab_bar")
+            .position(tab_bar_position)
             .track_scroll(self.tab_bar_scroll_handle.clone())
             .when(
                 self.display_nav_history_buttons.unwrap_or_default(),
@@ -1937,39 +1989,7 @@ impl Pane {
                     .zip(tab_details(&self.items, cx))
                     .map(|((ix, item), detail)| self.render_tab(ix, &**item, detail, cx)),
             )
-            .child(
-                div()
-                    .id("tab_bar_drop_target")
-                    .min_w_6()
-                    // HACK: This empty child is currently necessary to force the drop target to appear
-                    // despite us setting a min width above.
-                    .child("")
-                    .h_full()
-                    .flex_grow()
-                    .drag_over::<DraggedTab>(|bar, _, cx| {
-                        bar.bg(cx.theme().colors().drop_target_background)
-                    })
-                    .drag_over::<DraggedSelection>(|bar, _, cx| {
-                        bar.bg(cx.theme().colors().drop_target_background)
-                    })
-                    .on_drop(cx.listener(move |this, dragged_tab: &DraggedTab, cx| {
-                        this.drag_split_direction = None;
-                        this.handle_tab_drop(dragged_tab, this.items.len(), cx)
-                    }))
-                    .on_drop(cx.listener(move |this, selection: &DraggedSelection, cx| {
-                        this.drag_split_direction = None;
-                        this.handle_project_entry_drop(&selection.active_selection.entry_id, cx)
-                    }))
-                    .on_drop(cx.listener(move |this, paths, cx| {
-                        this.drag_split_direction = None;
-                        this.handle_external_paths_drop(paths, cx)
-                    }))
-                    .on_click(cx.listener(move |this, event: &ClickEvent, cx| {
-                        if event.up.click_count == 2 {
-                            cx.dispatch_action(this.double_click_dispatch_action.boxed_clone())
-                        }
-                    })),
-            )
+            .child(child)
     }
 
     pub fn render_menu_overlay(menu: &View<ContextMenu>) -> Div {
@@ -2196,11 +2216,20 @@ impl Render for Pane {
         let should_display_tab_bar = self.should_display_tab_bar.clone();
         let display_tab_bar = should_display_tab_bar(cx);
 
-        v_flex()
+        let tab_bar_position = self.tab_bar_position.clone();
+        let tab_bar_position = tab_bar_position(cx);
+        // TODO REMOVE THIS
+        let tab_bar_position = TabBarPosition::Right;
+
+        let container = match tab_bar_position {
+            TabBarPosition::Top => v_flex(),
+            TabBarPosition::Right => div().flex(),
+        };
+
+        container
             .key_context(key_context)
             .track_focus(&self.focus_handle)
             .size_full()
-            .flex_none()
             .overflow_hidden()
             .on_action(cx.listener(|pane, _: &AlternateFile, cx| {
                 pane.alternate_file(cx);
@@ -2297,15 +2326,13 @@ impl Render for Pane {
                     }
                 }),
             )
-            .when(self.active_item().is_some() && display_tab_bar, |pane| {
-                pane.child(self.render_tab_bar(cx))
-            })
             .child({
                 let has_worktrees = self.project.read(cx).worktrees(cx).next().is_some();
                 // main content
                 div()
-                    .flex_1()
-                    .relative()
+                    .flex_grow()
+                    // .h_full()
+                    // .relative()
                     .group("")
                     .on_drag_move::<DraggedTab>(cx.listener(Self::handle_drag_move))
                     .on_drag_move::<DraggedSelection>(cx.listener(Self::handle_drag_move))
@@ -2370,6 +2397,9 @@ impl Render for Pane {
                                 }
                             }),
                     )
+            })
+            .when(self.active_item().is_some() && display_tab_bar, |pane| {
+                pane.child(self.render_tab_bar(tab_bar_position, cx))
             })
             .on_mouse_down(
                 MouseButton::Navigate(NavigationDirection::Back),
