@@ -133,6 +133,7 @@ impl RenderOnce for Tab {
         };
 
         self.div
+            .flex_grow()
             .h(rems(Self::CONTAINER_HEIGHT_IN_REMS))
             .bg(tab_bg)
             .border_color(cx.theme().colors().border)

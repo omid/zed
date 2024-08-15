@@ -363,6 +363,7 @@ impl AssistantPanel {
             pane.set_can_navigate(true, cx);
             pane.display_nav_history_buttons(None);
             pane.set_should_display_tab_bar(|_| true);
+            // pane.set_tab_bar_position(|_| TabBarPosition::default());
             pane.set_render_tab_bar_buttons(cx, move |pane, cx| {
                 let focus_handle = pane.focus_handle(cx);
                 let left_children = IconButton::new("history", IconName::HistoryRerun)

@@ -1,3 +1,4 @@
+use crate::ui::TabBarPosition;
 use anyhow::Result;
 use collections::HashMap;
 use gpui::AppContext;
@@ -104,6 +105,7 @@ pub struct WorkspaceSettingsContent {
 pub struct TabBarSettings {
     pub show: bool,
     pub show_nav_history_buttons: bool,
+    pub position: TabBarPosition,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
@@ -116,6 +118,10 @@ pub struct TabBarSettingsContent {
     ///
     /// Default: true
     pub show_nav_history_buttons: Option<bool>,
+    /// Position of the the tabs, "top" or "right".
+    ///
+    /// Default: top
+    pub position: Option<TabBarPosition>,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]

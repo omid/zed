@@ -19,6 +19,7 @@ itertools = { workspace = true, optional = true }
 menu.workspace = true
 serde.workspace = true
 settings.workspace = true
+schemars.workspace = true
 smallvec.workspace = true
 story = { workspace = true, optional = true }
 strum = { workspace = true, features = ["derive"] }
